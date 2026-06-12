@@ -473,11 +473,42 @@ static int run_cb (flux_plugin_t *p, const char *topic, flux_plugin_arg_t *args,
 
     return 0;
 }
+static int destroy_cb (flux_plugin_t *p, const char *topic, flux_plugin_arg_t *args, void *arg)
+{
+    flux_t *h = flux_jobtap_get_flux (p);
+    flux_jobid_t job_id, *delegated_job_id;
+    flux_future_t *cancel_future = NULL;
+    flux_t *delegated_handle = NULL;
+    if (!h)
+        return -1;
+
+    if (!(delegated_job_id =
+              flux_jobtap_job_aux_get (p, FLUX_JOBTAP_CURRENT_JOB, "flux::delegate::delegate_id")))
+        return 0;
+    if (flux_plugin_arg_unpack (args, FLUX_PLUGIN_ARG_IN, "{s:I}", "id", &job_id) < 0) {
+        flux_log_error (h, "flux_plugin_arg_unpack for jobid");
+        return 0;
+    }
+    if (!(delegated_handle = flux_jobtap_job_aux_get (p, job_id, "flux::delegated_handle"))) {
+        flux_log_error (h, "job is delegated but its handle not found");
+        return -1;
+    }
+    if (!(cancel_future =
+              flux_job_cancel (delegated_handle, *delegated_job_id, "Cancelled by parent cluster"))
+        || flux_future_get (cancel_future, NULL) < 0) {
+        flux_log_error (h,
+                        "Unable to cancel job in child cluster %s",
+                        flux_future_error_string (cancel_future));
+        return 0;
+    }
+    return 0;
+}
 
 static const struct flux_plugin_handler tab[] = {
     {"job.dependency.delegate", depend_cb, NULL},
     {"job.state.sched", sched_cb, NULL},
     {"job.state.run", run_cb, NULL},
+    {"job.destroy", destroy_cb, NULL},
     {0},
 };
 
