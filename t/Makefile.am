@@ -16,7 +16,6 @@ TEST_EXTENSIONS = .t
 T_LOG_DRIVER = env AM_TAP_AWK='$(AWK)' $(SHELL) \
 	$(top_srcdir)/config/tap-driver.sh
 
-# Test scripts
 TESTSCRIPTS = \
 	t0000-sharness.t \
 	t1000-delegate-load.t \
