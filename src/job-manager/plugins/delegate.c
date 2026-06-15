@@ -141,6 +141,7 @@ static void submit_callback (flux_future_t *f, void *arg)
         || !(id_for_event = malloc (sizeof (*id_for_event)))
         || !(idcpy = malloc (sizeof (*idcpy)))) {
         flux_log_error (h, "Unable to create flux_ids");
+        goto error;
     }
     if (!(orig_id = flux_future_aux_get (f, "flux::jobid"))) {
         flux_log_error (h, "in submit callback: couldn't get jobid");
@@ -170,6 +171,7 @@ static void submit_callback (flux_future_t *f, void *arg)
         flux_future_destroy (wait_future);
         flux_future_destroy (event_future);
         flux_future_destroy (f);
+        free (idcpy);
         return;
     }
     *idcpy = delegated_id;
