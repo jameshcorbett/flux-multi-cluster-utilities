@@ -144,8 +144,7 @@ static void submit_callback (flux_future_t *f, void *arg)
     }
     if (!(orig_id = flux_future_aux_get (f, "flux::jobid"))) {
         flux_log_error (h, "in submit callback: couldn't get jobid");
-        flux_future_destroy (f);
-        return;
+        goto error;
     }
     *id_for_event = *orig_id;
     *id_for_wait = *orig_id;
@@ -178,6 +177,13 @@ static void submit_callback (flux_future_t *f, void *arg)
         flux_log_error (h, "unable to save delegated jobId");
     }
     flux_future_destroy (f);
+    return;
+error:
+    free (id_for_event);
+    free (id_for_wait);
+    free (idcpy);
+    flux_future_destroy (f);
+    return;
 }
 
 /*
