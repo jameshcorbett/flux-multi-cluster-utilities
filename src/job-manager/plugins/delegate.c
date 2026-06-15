@@ -62,6 +62,22 @@ static void wait_callback (flux_future_t *f, void *arg)
     flux_future_destroy (f);
 }
 
+static void cancel_callback (flux_future_t *f, void *arg)
+{
+    flux_plugin_t *p = arg;
+    flux_t *h;
+    const char *errstr;
+    if (!(h = flux_jobtap_get_flux (p))) {
+        flux_future_destroy (f);
+        return;
+    }
+    if (!(errstr = flux_future_error_string (f))) {
+        flux_future_destroy (f);
+        return;
+    }
+    flux_log_error (h, "Target Instance job cancel failure, Error: %s", errstr);
+    flux_future_destroy (f);
+}
 /*
  * Callback firing when events are ready.
  */
@@ -115,9 +131,7 @@ static void submit_callback (flux_future_t *f, void *arg)
     flux_t *h, *delegated_h;
     flux_plugin_t *p = arg;
     flux_jobid_t delegated_id, *orig_id, *idcpy = NULL, *id_for_wait = NULL, *id_for_event = NULL;
-    ;
     flux_future_t *wait_future = NULL, *event_future = NULL;
-
     const char *errstr;
     if (!(h = flux_jobtap_get_flux (p))) {
         flux_future_destroy (f);
@@ -273,7 +287,8 @@ static int depend_cb (flux_plugin_t *p, const char *topic, flux_plugin_arg_t *ar
     if (!(encoded_jobspec = remove_dependency_and_encode (jobspec))
         || !(jobid_future = flux_job_submit (delegated, encoded_jobspec, 16, FLUX_JOB_WAITABLE))
         || flux_future_then (jobid_future, -1, submit_callback, p) < 0
-        || flux_future_aux_set (jobid_future, "flux::jobid", id, NULL) < 0) {
+        || flux_future_aux_set (jobid_future, "flux::jobid", id, NULL) < 0
+        || flux_jobtap_job_subscribe (p, *id) < 0) {
         flux_log_error (h,
                         "%s: could not delegate job to specified Flux "
                         "instance",
@@ -473,32 +488,53 @@ static int run_cb (flux_plugin_t *p, const char *topic, flux_plugin_arg_t *args,
 
     return 0;
 }
-static int destroy_cb (flux_plugin_t *p, const char *topic, flux_plugin_arg_t *args, void *arg)
+static int exception_cb (flux_plugin_t *p, const char *topic, flux_plugin_arg_t *args, void *arg)
 {
     flux_t *h = flux_jobtap_get_flux (p);
     flux_jobid_t job_id, *delegated_job_id;
+    int severity = 0;
+    json_t *context;
+    const char *name;
     flux_future_t *cancel_future = NULL;
     flux_t *delegated_handle = NULL;
     if (!h)
         return -1;
-
     if (!(delegated_job_id =
               flux_jobtap_job_aux_get (p, FLUX_JOBTAP_CURRENT_JOB, "flux::delegate::delegate_id")))
         return 0;
-    if (flux_plugin_arg_unpack (args, FLUX_PLUGIN_ARG_IN, "{s:I}", "id", &job_id) < 0) {
-        flux_log_error (h, "flux_plugin_arg_unpack for jobid");
+    if (flux_plugin_arg_unpack (args,
+                                FLUX_PLUGIN_ARG_IN,
+                                "{s:I s:{s:s s:o}}",
+                                "id",
+                                &job_id,
+                                "entry",
+                                "name",
+                                &name,
+                                "context",
+                                &context)
+        < 0) {
+        flux_log_error (h, "flux_plugin_arg_unpack");
         return 0;
     }
+
+    if (!strcmp (name, "exception")) {
+        if (json_unpack (context, "{s:i}", "severity", &severity) < 0) {
+            flux_log_error (h, "unpacking exception context");
+            return 0;
+        }
+    }
+    if (severity != 0)
+        return 0;
+
     if (!(delegated_handle = flux_jobtap_job_aux_get (p, job_id, "flux::delegated_handle"))) {
         flux_log_error (h, "job is delegated but its handle not found");
         return -1;
     }
     if (!(cancel_future =
               flux_job_cancel (delegated_handle, *delegated_job_id, "Cancelled by parent cluster"))
-        || flux_future_get (cancel_future, NULL) < 0) {
-        flux_log_error (h,
-                        "Unable to cancel job in child cluster %s",
-                        flux_future_error_string (cancel_future));
+        || flux_future_then (cancel_future, -1, cancel_callback, p) < 0) {
+        flux_log_error (h, "error cancel");
+        flux_future_destroy (cancel_future);
         return 0;
     }
     return 0;
@@ -508,7 +544,7 @@ static const struct flux_plugin_handler tab[] = {
     {"job.dependency.delegate", depend_cb, NULL},
     {"job.state.sched", sched_cb, NULL},
     {"job.state.run", run_cb, NULL},
-    {"job.destroy", destroy_cb, NULL},
+    {"job.event.exception", exception_cb, NULL},
     {0},
 };
 
