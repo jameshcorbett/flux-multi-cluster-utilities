@@ -271,6 +271,18 @@ static int depend_cb (flux_plugin_t *p, const char *topic, flux_plugin_arg_t *ar
         return -1;
     }
     free (encoded_jobspec);
+    if (flux_jobtap_jobspec_update_pack (p,
+                                         "{s:{s:{s:{s:{s:i}}}}",
+                                         "attributes",
+                                         "system",
+                                         "exec",
+                                         "test",
+                                         "override",
+                                         1)
+        < 0) {
+        flux_log_error (h, "%s: failed to enable exec test override", idf58 (*id));
+        return 0;
+    }
     return 0;
 }
 
@@ -411,6 +423,7 @@ static int run_cb (flux_plugin_t *p, const char *topic, flux_plugin_arg_t *args,
     flux_t *h = flux_jobtap_get_flux (p);
     flux_jobid_t job_id;
     flux_future_t *run_future;
+    const char *message = NULL;
 
     if (!h)
         return -1;
@@ -442,20 +455,35 @@ static int run_cb (flux_plugin_t *p, const char *topic, flux_plugin_arg_t *args,
         flux_log_error (h, "flux_rpc_pack failed for %s job-exec.override: start", idf58 (job_id));
         return -1;
     }
+    if (flux_rpc_get (run_future, &message) < 0) {
+        flux_log_error (h, "job-exec.override: start rpc failed for %s", idf58 (job_id));
+        if (message) {
+            flux_log_error (h, "job-exec message: %s", message);
+        }
+    }
     flux_future_destroy (run_future);
     if (!(run_future = flux_rpc_pack (h,
                                       "job-exec.override",
                                       FLUX_NODEID_ANY,
                                       0,
-                                      "{s:s s:I}",
+                                      "{s:s s:I s:i}",
                                       "event",
                                       "finish",
                                       "jobid",
-                                      job_id))) {
+                                      job_id,
+                                      "status",
+                                      0))) {
         flux_log_error (h,
                         "flux_rpc_pack failed for %s in job-exec.override: finish",
                         idf58 (job_id));
         return -1;
+    }
+    message = NULL;
+    if (flux_rpc_get (run_future, &message) < 0) {
+        flux_log_error (h, "job-exec.override: finish rpc failed for %s", idf58 (job_id));
+        if (message) {
+            flux_log_error (h, "job-exec message: %s", message);
+        }
     }
     flux_future_destroy (run_future);
 
