@@ -180,7 +180,7 @@ static void submit_callback (flux_future_t *f, void *arg)
         flux_log_error (h, "unable to save delegated jobId");
         goto error;
     }
-    idcpy=NULL;
+    idcpy = NULL;
     flux_future_destroy (f);
     return;
 error:
