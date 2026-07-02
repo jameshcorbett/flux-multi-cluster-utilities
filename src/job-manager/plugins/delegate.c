@@ -137,24 +137,20 @@ static void submit_callback (flux_future_t *f, void *arg)
         flux_future_destroy (f);
         return;
     }
-    if (!(id_for_wait = malloc (sizeof (*id_for_wait)))
-        || !(id_for_event = malloc (sizeof (*id_for_event)))
-        || !(idcpy = malloc (sizeof (*idcpy)))) {
-        flux_log_error (h, "Unable to create flux_ids");
-        goto error;
-    }
     if (!(orig_id = flux_future_aux_get (f, "flux::jobid"))) {
         flux_log_error (h, "in submit callback: couldn't get jobid");
-        goto error;
+        flux_future_destroy (f);
+        return;
     }
-    *id_for_event = *orig_id;
-    *id_for_wait = *orig_id;
     if (!(delegated_h = flux_future_get_flux (f)) || flux_job_submit_get_id (f, &delegated_id) < 0
         || !(wait_future = flux_job_wait (delegated_h, delegated_id))
-        || flux_future_aux_set (wait_future, "flux::jobid", id_for_wait, free) < 0
-        || flux_future_then (wait_future, -1, wait_callback, p) < 0
-        || !(event_future = flux_job_event_watch (delegated_h, delegated_id, "eventlog", 0))
-        || flux_future_aux_set (event_future, "flux::jobid", id_for_event, free) < 0
+        || !(id_for_wait = malloc (sizeof (*id_for_wait)))
+        || flux_future_then (wait_future, -1, wait_callback, p) < 0) {
+        goto error;
+    }
+
+    if (!(event_future = flux_job_event_watch (delegated_h, delegated_id, "eventlog", 0))
+        || !(id_for_event = malloc (sizeof (*id_for_event))) || !(idcpy = malloc (sizeof (*idcpy)))
         || flux_future_aux_set (event_future, "flux::handle", h, NULL) < 0
         || flux_future_then (event_future, -1, event_callback, p) < 0
         || flux_jobtap_event_post_pack (p,
@@ -168,19 +164,29 @@ static void submit_callback (flux_future_t *f, void *arg)
             errstr = "";
         }
         flux_jobtap_raise_exception (p, *orig_id, "DelegationFailure", 0, errstr);
-        flux_future_destroy (wait_future);
-        flux_future_destroy (event_future);
-        flux_future_destroy (f);
-        free (idcpy);
-        return;
+        goto error;
     }
+    *id_for_wait = *orig_id;
+    *id_for_event = *orig_id;
     *idcpy = delegated_id;
+    if (flux_future_aux_set (wait_future, "flux::jobid", id_for_wait, free) < 0) {
+        goto error;
+    }
+    id_for_wait = NULL;
+    if (flux_future_aux_set (event_future, "flux::jobid", id_for_event, free) < 0)
+        goto error;
+    id_for_event = NULL;
     if (flux_jobtap_job_aux_set (p, *orig_id, "flux::delegate::delegate_id", idcpy, free) < 0) {
         flux_log_error (h, "unable to save delegated jobId");
+        goto error;
     }
+    idcpy=NULL;
     flux_future_destroy (f);
     return;
 error:
+    flux_log_error (h, "%s: submission to specified Flux instance failed", idf58 (*orig_id));
+    flux_future_destroy (wait_future);
+    flux_future_destroy (event_future);
     free (id_for_event);
     free (id_for_wait);
     free (idcpy);

@@ -6,12 +6,6 @@ test_description='Test delegate plugin cancellation propagation (source <-> targ
 
 test_under_flux 3
 
-# Check if we're in test environment with flux available
-if ! command -v flux >/dev/null 2>&1; then
-	skip_all='flux command not found, skipping tests'
-	test_done
-fi
-
 # Helper: extract the delegated jobid recorded in the source job's
 # delegate::submit eventlog entry.
 extract_delegated_id() {
